@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     
     # Gemini/LLM Configuration
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    LLM_MODEL: str = "gemini-1.5-flash"
+    LLM_MODEL: str = "gemini-pro"
     LLM_TEMPERATURE: float = 0.7
     LLM_MAX_TOKENS: int = 150
     

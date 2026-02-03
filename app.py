@@ -4,10 +4,12 @@ Handles incoming message events and orchestrates scam detection + agent engageme
 """
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
 import uvicorn
 import logging
+import json
 
 from auth import verify_api_key
 from config import settings
@@ -31,24 +33,59 @@ session_store = SessionMemoryStore()
 callback_client = GuviCallbackClient()
 
 
+# Add middleware to log all requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url}")
+    try:
+        body = await request.body()
+        if body:
+            logger.info(f"Request body: {body.decode()}")
+    except Exception as e:
+        logger.error(f"Error reading request body: {e}")
+    
+    # Reset body for actual processing
+    async def receive():
+        return {"type": "http.request", "body": body}
+    
+    request._receive = receive
+    response = await call_next(request)
+    return response
+
+
+# Custom validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc.errors()}")
+    logger.error(f"Request body: {await request.body()}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "error",
+            "message": "Invalid request format",
+            "details": exc.errors()
+        }
+    )
+
+
 # Request/Response Models
 class Message(BaseModel):
-    sender: Literal["scammer", "user"]
+    sender: str  # Changed from Literal to accept any string
     text: str
     timestamp: int
 
 
 class Metadata(BaseModel):
-    channel: Literal["SMS", "WhatsApp", "Email", "Chat"]
-    language: str
-    locale: str
+    channel: str = "SMS"  # Made optional with default
+    language: str = "English"  # Made optional with default
+    locale: str = "IN"  # Made optional with default
 
 
 class IncomingRequest(BaseModel):
     sessionId: str
     message: Message
     conversationHistory: List[Message] = Field(default_factory=list)
-    metadata: Metadata
+    metadata: Metadata = Field(default_factory=Metadata)  # Use default factory instead of Optional
 
 
 class ApiResponse(BaseModel):
@@ -69,9 +106,10 @@ async def handle_message(
         session_id = request.sessionId
         incoming_message = request.message
         conversation_history = request.conversationHistory
-        metadata = request.metadata
+        metadata = request.metadata  # Now always has a value (default or provided)
         
         logger.info(f"Processing message for session: {session_id}")
+        logger.info(f"Message: {incoming_message.text}")
         
         # Get or create session state
         session = session_store.get_or_create_session(session_id)
