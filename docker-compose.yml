@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  honeypot-api:
+    build: .
+    container_name: honeypot-api
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=False
+      - API_KEY=${API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_MODEL=gpt-4o-mini
+      - LLM_TEMPERATURE=0.7
+      - LLM_MAX_TOKENS=150
+      - GUVI_CALLBACK_URL=https://hackathon.guvi.in/api/updateHoneyPotFinalResult
+      - MIN_MESSAGES_BEFORE_END=8
+      - MAX_MESSAGES_PER_SESSION=25
+      - MIN_INTELLIGENCE_ITEMS=2
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
