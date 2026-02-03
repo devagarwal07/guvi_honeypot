@@ -37,55 +37,71 @@ callback_client = GuviCallbackClient()
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"Incoming request: {request.method} {request.url}")
+    logger.info(f"Headers: {dict(request.headers)}")
     try:
         body = await request.body()
         if body:
             logger.info(f"Request body: {body.decode()}")
+            # Reset body for actual processing
+            async def receive():
+                return {"type": "http.request", "body": body}
+            request._receive = receive
     except Exception as e:
         logger.error(f"Error reading request body: {e}")
     
-    # Reset body for actual processing
-    async def receive():
-        return {"type": "http.request", "body": body}
-    
-    request._receive = receive
     response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
     return response
 
 
 # Custom validation error handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.error(f"Validation error: {exc.errors()}")
-    logger.error(f"Request body: {await request.body()}")
+    body_bytes = await request.body()
+    body_str = body_bytes.decode()
+    
+    logger.error(f"Validation error for request to {request.url}")
+    logger.error(f"Request body: {body_str}")
+    logger.error(f"Validation errors: {exc.errors()}")
+    
     return JSONResponse(
         status_code=422,
         content={
             "status": "error",
             "message": "Invalid request format",
-            "details": exc.errors()
+            "details": exc.errors(),
+            "received_body": body_str[:500]  # First 500 chars
         }
     )
 
 
 # Request/Response Models
 class Message(BaseModel):
-    sender: str  # Changed from Literal to accept any string
+    sender: str  # Accept any string
     text: str
     timestamp: int
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
 
 
 class Metadata(BaseModel):
-    channel: str = "SMS"  # Made optional with default
-    language: str = "English"  # Made optional with default
-    locale: str = "IN"  # Made optional with default
+    channel: str = "SMS"
+    language: str = "English"
+    locale: str = "IN"
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
 
 
 class IncomingRequest(BaseModel):
     sessionId: str
     message: Message
     conversationHistory: List[Message] = Field(default_factory=list)
-    metadata: Metadata = Field(default_factory=Metadata)  # Use default factory instead of Optional
+    metadata: Metadata = Field(default_factory=Metadata)
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
 
 
 class ApiResponse(BaseModel):
@@ -204,6 +220,25 @@ async def handle_message(
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "honeypot-api"}
+
+
+@app.post("/api/debug")
+async def debug_endpoint(request: Request):
+    """Debug endpoint to see what GUVI is sending"""
+    try:
+        body = await request.json()
+        logger.info(f"DEBUG - Received body: {json.dumps(body, indent=2)}")
+        return {
+            "status": "debug",
+            "received": body,
+            "message": "This is a debug endpoint"
+        }
+    except Exception as e:
+        logger.error(f"DEBUG - Error: {str(e)}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 if __name__ == "__main__":
