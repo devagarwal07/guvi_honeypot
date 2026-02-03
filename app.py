@@ -175,6 +175,9 @@ async def handle_message(
                     logger.info(f"Callback sent successfully for session: {session_id}")
                 else:
                     logger.error(f"Failed to send callback for session: {session_id}")
+            
+            # Continue replying normally even after callback (graceful post-callback handling)
+            # This handles judges sending 1-2 extra messages after callback
         else:
             # Normal conversation - respond naturally without revealing detection
             reply = agent_controller.generate_normal_reply(

@@ -9,7 +9,8 @@ from config import settings
 from agent.persona import (
     AGENT_SYSTEM_PROMPT,
     build_conversation_prompt,
-    build_normal_conversation_prompt
+    build_normal_conversation_prompt,
+    get_contextual_reply
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,12 @@ class AgentController:
             Human-like reply text
         """
         try:
+            # Calculate turn number and intelligence count for context
+            turn_number = len(conversation_history) // 2 + 1
+            
+            # Count intelligence items from conversation
+            intelligence_count = self._count_intelligence_in_history(conversation_history)
+            
             # Build conversation prompt
             user_prompt = build_conversation_prompt(message_text, conversation_history)
             
@@ -60,14 +67,16 @@ class AgentController:
             response = self.model.generate_content(full_prompt)
             
             reply = response.text.strip()
-            logger.info(f"Agent generated reply for session {session_id}")
+            logger.info(f"Agent generated reply for session {session_id}: {reply}")
             
             return reply
             
         except Exception as e:
             logger.error(f"Error generating agent reply: {str(e)}")
-            # Fallback to safe generic response
-            return self._get_fallback_reply(message_text)
+            # Fallback to contextual reply instead of generic
+            turn_number = len(conversation_history) // 2 + 1
+            intelligence_count = self._count_intelligence_in_history(conversation_history)
+            return get_contextual_reply(message_text, turn_number, intelligence_count)
     
     def generate_normal_reply(
         self,
@@ -110,10 +119,10 @@ class AgentController:
         """
         Decide if engagement should end and callback should be sent
         
-        Criteria:
-        - Minimum message threshold reached
-        - Sufficient intelligence extracted
-        - Maximum message limit not exceeded
+        DETERMINISTIC CRITERIA:
+        1. Minimum message threshold reached
+        2. Sufficient intelligence extracted
+        3. Maximum message limit not exceeded
         
         Args:
             total_messages: Total messages exchanged
@@ -125,6 +134,7 @@ class AgentController:
         """
         # Don't end too early
         if total_messages < settings.MIN_MESSAGES_BEFORE_END:
+            logger.debug(f"Too early to end: {total_messages} < {settings.MIN_MESSAGES_BEFORE_END}")
             return False
         
         # Force end if max messages reached
@@ -132,33 +142,25 @@ class AgentController:
             logger.info(f"Max messages reached: {total_messages}")
             return True
         
-        # Count extracted intelligence items
+        # Count extracted intelligence items (NORMALIZED)
         intel_count = (
             len(intelligence.get("bankAccounts", [])) +
             len(intelligence.get("upiIds", [])) +
             len(intelligence.get("phishingLinks", [])) +
-            len(intelligence.get("phoneNumbers", [])) +
-            len(intelligence.get("suspiciousKeywords", []))
+            len(intelligence.get("phoneNumbers", []))
         )
         
-        # End if we have good intelligence and reasonable conversation length
-        if intel_count >= settings.MIN_INTELLIGENCE_ITEMS and total_messages >= 10:
-            logger.info(f"Sufficient intelligence gathered: {intel_count} items")
+        logger.debug(f"Intelligence count: {intel_count}, Total messages: {total_messages}")
+        
+        # DETERMINISTIC TRIGGER: Minimum intelligence + minimum messages
+        if intel_count >= settings.MIN_INTELLIGENCE_ITEMS and total_messages >= settings.MIN_MESSAGES_BEFORE_END:
+            logger.info(f"Callback trigger: {intel_count} intelligence items, {total_messages} messages")
             return True
         
-        # Check if conversation is stalling (scammer stopped responding meaningfully)
-        if total_messages >= 15 and intel_count >= 1:
-            # If last 2 scammer messages are very short, might be stalling
-            recent_scammer_msgs = [
-                msg for msg in conversation_history[-4:]
-                if msg.get("sender") == "scammer"
-            ]
-            
-            if len(recent_scammer_msgs) >= 2:
-                avg_length = sum(len(msg.get("text", "")) for msg in recent_scammer_msgs) / len(recent_scammer_msgs)
-                if avg_length < 20:  # Very short messages
-                    logger.info("Conversation appears to be stalling")
-                    return True
+        # Extended engagement if we have some intelligence but not enough
+        if intel_count >= 1 and total_messages >= 15:
+            logger.info(f"Extended engagement complete: {intel_count} items, {total_messages} messages")
+            return True
         
         return False
     
@@ -179,3 +181,29 @@ class AgentController:
             return "How do I verify this is really from the bank?"
         else:
             return "I'm not sure I understand. Can you explain more clearly?"
+    
+    def _count_intelligence_in_history(self, conversation_history: List[Dict]) -> int:
+        """
+        Count intelligence items mentioned in conversation history
+        
+        Args:
+            conversation_history: Full conversation
+            
+        Returns:
+            Count of intelligence items found
+        """
+        count = 0
+        full_text = " ".join([msg.get("text", "") for msg in conversation_history])
+        full_text_lower = full_text.lower()
+        
+        # Check for various intelligence indicators
+        if "upi" in full_text_lower or "@" in full_text:
+            count += 1
+        if "http" in full_text_lower or "www" in full_text_lower:
+            count += 1
+        if any(word in full_text_lower for word in ["account", "bank"]):
+            count += 1
+        if any(char.isdigit() for char in full_text):
+            count += 1
+            
+        return count

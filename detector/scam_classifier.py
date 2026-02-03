@@ -91,28 +91,35 @@ class ScamClassifier:
         
         # Count keyword matches
         keyword_matches = 0
+        matched_keywords = []
         for pattern in self.scam_keywords:
             if re.search(pattern, message_lower):
                 keyword_matches += 1
+                matched_keywords.append(pattern)
                 logger.debug(f"Scam keyword matched: {pattern}")
         
-        # High confidence detection - multiple keywords
-        if keyword_matches >= 2:
-            logger.info(f"Scam detected: {keyword_matches} keyword matches")
+        # Aggressive detection - even 1 strong keyword
+        if keyword_matches >= 1:
+            logger.info(f"Scam detected: {keyword_matches} keyword matches - {matched_keywords[:2]}")
             return True
         
         # Context escalation - check conversation history
-        if len(conversation_history) >= 2:
+        if len(conversation_history) >= 1:
             escalation_score = self._calculate_escalation_score(conversation_history)
             
-            # If escalation detected + at least 1 keyword
-            if escalation_score >= 3 and keyword_matches >= 1:
+            # Lower threshold - detect faster
+            if escalation_score >= 2:
                 logger.info(f"Scam detected: escalation score {escalation_score}")
                 return True
         
-        # Check for URLs/links with urgency
-        if self._has_suspicious_link(message_lower) and keyword_matches >= 1:
-            logger.info("Scam detected: suspicious link with keywords")
+        # Check for URLs/links - immediate detection
+        if self._has_suspicious_link(message_lower):
+            logger.info("Scam detected: suspicious link found")
+            return True
+        
+        # Check for UPI/payment mentions
+        if any(word in message_lower for word in ["upi", "account number", "ifsc", "transfer"]):
+            logger.info("Scam detected: payment/account details requested")
             return True
         
         return False

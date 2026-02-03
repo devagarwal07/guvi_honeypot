@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     GUVI_CALLBACK_URL: str = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
     
     # Agent behavior settings
-    MIN_MESSAGES_BEFORE_END: int = 8
-    MAX_MESSAGES_PER_SESSION: int = 25
-    MIN_INTELLIGENCE_ITEMS: int = 2
+    MIN_MESSAGES_BEFORE_END: int = 10  # Increased from 8
+    MAX_MESSAGES_PER_SESSION: int = 30  # Increased from 25
+    MIN_INTELLIGENCE_ITEMS: int = 3  # Increased from 2
     
     # Scam detection thresholds
     SCAM_KEYWORD_THRESHOLD: int = 2
