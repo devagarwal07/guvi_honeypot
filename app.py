@@ -37,20 +37,23 @@ callback_client = GuviCallbackClient()
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"Incoming request: {request.method} {request.url}")
-    logger.info(f"Headers: {dict(request.headers)}")
-    try:
+    
+    # Only log body for debugging, don't consume it
+    if request.method == "POST":
         body = await request.body()
         if body:
-            logger.info(f"Request body: {body.decode()}")
-            # Reset body for actual processing
+            try:
+                logger.info(f"Request body: {body.decode()[:500]}")  # Log first 500 chars
+            except:
+                pass
+            
+            # CRITICAL: Reset body for actual processing
             async def receive():
                 return {"type": "http.request", "body": body}
+            
             request._receive = receive
-    except Exception as e:
-        logger.error(f"Error reading request body: {e}")
     
     response = await call_next(request)
-    logger.info(f"Response status: {response.status_code}")
     return response
 
 
