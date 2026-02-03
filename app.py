@@ -33,28 +33,7 @@ session_store = SessionMemoryStore()
 callback_client = GuviCallbackClient()
 
 
-# Add middleware to log all requests
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"Incoming request: {request.method} {request.url}")
-    
-    # Only log body for debugging, don't consume it
-    if request.method == "POST":
-        body = await request.body()
-        if body:
-            try:
-                logger.info(f"Request body: {body.decode()[:500]}")  # Log first 500 chars
-            except:
-                pass
-            
-            # CRITICAL: Reset body for actual processing
-            async def receive():
-                return {"type": "http.request", "body": body}
-            
-            request._receive = receive
-    
-    response = await call_next(request)
-    return response
+# Removed middleware - it was causing body consumption issues in production
 
 
 # Custom validation error handler
