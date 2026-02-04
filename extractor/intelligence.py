@@ -79,43 +79,27 @@ class IntelligenceExtractor:
                 if len(account) >= 9 and len(account) <= 18:
                     extracted["bankAccounts"].append(account)
         
-        # Extract UPI IDs with normalization
+        # Extract UPI IDs
         for pattern in self.patterns["upi_ids"]:
             matches = re.findall(pattern, message_text, re.IGNORECASE)
             for match in matches:
                 upi = match if isinstance(match, str) else match
-                upi = upi.strip().lower()  # Normalize to lowercase
                 # Validate UPI format
-                if "@" in upi and len(upi) > 5 and upi not in extracted["upiIds"]:
+                if "@" in upi and len(upi) > 5:
                     extracted["upiIds"].append(upi)
         
-        # Extract phone numbers with normalization
+        # Extract phone numbers
         for pattern in self.patterns["phone_numbers"]:
             matches = re.findall(pattern, message_text)
             for match in matches:
                 phone = re.sub(r'[-.\s]', '', match)  # Clean formatting
-                phone = phone.strip()
-                # Normalize to +91 format
-                if len(phone) == 10 and phone[0] in '6789':
-                    phone = f"+91{phone}"
-                elif len(phone) == 11 and phone.startswith('0'):
-                    phone = f"+91{phone[1:]}"
-                elif not phone.startswith('+') and len(phone) >= 10:
-                    phone = f"+91{phone[-10:]}"
-                
-                if phone not in extracted["phoneNumbers"]:
+                if len(phone) >= 10:
                     extracted["phoneNumbers"].append(phone)
         
-        # Extract URLs with normalization
+        # Extract URLs
         for pattern in self.patterns["urls"]:
             matches = re.findall(pattern, message_text, re.IGNORECASE)
-            for match in matches:
-                url = match.strip().lower()
-                # Ensure http:// prefix
-                if not url.startswith(('http://', 'https://')):
-                    url = f"http://{url}"
-                if url not in extracted["phishingLinks"]:
-                    extracted["phishingLinks"].append(url)
+            extracted["phishingLinks"].extend(matches)
         
         # Extract suspicious keywords
         for keyword in self.suspicious_keywords:

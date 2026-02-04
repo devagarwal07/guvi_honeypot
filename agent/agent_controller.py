@@ -119,10 +119,10 @@ class AgentController:
         """
         Decide if engagement should end and callback should be sent
         
-        DETERMINISTIC CRITERIA:
-        1. Minimum message threshold reached
-        2. Sufficient intelligence extracted
-        3. Maximum message limit not exceeded
+        Criteria:
+        - Minimum message threshold reached
+        - Sufficient intelligence extracted
+        - Maximum message limit not exceeded
         
         Args:
             total_messages: Total messages exchanged
@@ -134,7 +134,6 @@ class AgentController:
         """
         # Don't end too early
         if total_messages < settings.MIN_MESSAGES_BEFORE_END:
-            logger.debug(f"Too early to end: {total_messages} < {settings.MIN_MESSAGES_BEFORE_END}")
             return False
         
         # Force end if max messages reached
@@ -142,25 +141,33 @@ class AgentController:
             logger.info(f"Max messages reached: {total_messages}")
             return True
         
-        # Count extracted intelligence items (NORMALIZED)
+        # Count extracted intelligence items
         intel_count = (
             len(intelligence.get("bankAccounts", [])) +
             len(intelligence.get("upiIds", [])) +
             len(intelligence.get("phishingLinks", [])) +
-            len(intelligence.get("phoneNumbers", []))
+            len(intelligence.get("phoneNumbers", [])) +
+            len(intelligence.get("suspiciousKeywords", []))
         )
         
-        logger.debug(f"Intelligence count: {intel_count}, Total messages: {total_messages}")
-        
-        # DETERMINISTIC TRIGGER: Minimum intelligence + minimum messages
-        if intel_count >= settings.MIN_INTELLIGENCE_ITEMS and total_messages >= settings.MIN_MESSAGES_BEFORE_END:
-            logger.info(f"Callback trigger: {intel_count} intelligence items, {total_messages} messages")
+        # End if we have good intelligence and reasonable conversation length
+        if intel_count >= settings.MIN_INTELLIGENCE_ITEMS and total_messages >= 10:
+            logger.info(f"Sufficient intelligence gathered: {intel_count} items")
             return True
         
-        # Extended engagement if we have some intelligence but not enough
-        if intel_count >= 1 and total_messages >= 15:
-            logger.info(f"Extended engagement complete: {intel_count} items, {total_messages} messages")
-            return True
+        # Check if conversation is stalling (scammer stopped responding meaningfully)
+        if total_messages >= 15 and intel_count >= 1:
+            # If last 2 scammer messages are very short, might be stalling
+            recent_scammer_msgs = [
+                msg for msg in conversation_history[-4:]
+                if msg.get("sender") == "scammer"
+            ]
+            
+            if len(recent_scammer_msgs) >= 2:
+                avg_length = sum(len(msg.get("text", "")) for msg in recent_scammer_msgs) / len(recent_scammer_msgs)
+                if avg_length < 20:  # Very short messages
+                    logger.info("Conversation appears to be stalling")
+                    return True
         
         return False
     

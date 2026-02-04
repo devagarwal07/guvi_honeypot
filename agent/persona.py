@@ -70,11 +70,8 @@ COOPERATIVE_REPLIES = [
     "I'm trying but it's failing",
     "Tell me exactly what to enter",
     "I'm on the page, what next?",
-    "It opened but I'm not sure what to do",
-    "Okay I see something, what should I enter?",
     "Should I click on this button?",
-    "It's asking for OTP, should I share it?",
-    "I don't want my account blocked, please help"
+    "It's asking for OTP, should I share it?"
 ]
 
 TECHNICAL_ISSUE_REPLIES = [
@@ -82,18 +79,7 @@ TECHNICAL_ISSUE_REPLIES = [
     "It says error, what should I do?",
     "My phone is slow, can you wait?",
     "I'm not able to see the page properly",
-    "It's asking for too many details",
-    "The page is loading slowly",
-    "It's showing some error message"
-]
-
-PAGE_STUCK_REPLIES = [
-    "I'm on the page, what next?",
-    "It opened but I'm not sure what to do",
-    "Okay I see something, what should I enter?",
-    "It's asking for details, can you guide me?",
-    "I see a form, what information do I fill?",
-    "There are many fields, which ones are required?"
+    "It's asking for too many details"
 ]
 
 
@@ -159,42 +145,35 @@ def get_contextual_reply(message_text: str, turn_number: int, intelligence_count
                 return random.choice([
                     "Which UPI ID exactly?",
                     "What's the UPI ID I should use?",
-                    "Can you send the UPI ID again?",
-                    "Where do I send the payment?"
+                    "Can you send the UPI ID again?"
                 ])
             elif "link" in message_lower or "http" in message_lower:
                 return random.choice([
                     "The link is not opening",
                     "Can you send it again?",
-                    "It says error when I click",
-                    "The page is loading slowly"
+                    "It says error when I click"
                 ])
             elif "account" in message_lower or "bank" in message_lower:
                 return random.choice([
                     "Which account number?",
                     "What details do you need?",
-                    "Tell me exactly what to enter",
-                    "Which bank account should I use?"
+                    "Tell me exactly what to enter"
                 ])
             else:
                 return random.choice(EXTRACTION_REPLIES)
         else:
-            # Have some intelligence - show cooperation with variation
-            return random.choice(COOPERATIVE_REPLIES + PAGE_STUCK_REPLIES)
+            # Have some intelligence - show cooperation
+            return random.choice(COOPERATIVE_REPLIES)
     
-    # Late turns (9+) - very cooperative, confidence drift
+    # Late turns (9+) - very cooperative, slow human behavior
     else:
-        # Add confidence drift - show trust and urgency
-        if turn_number >= 12:
-            return random.choice([
-                "I don't want my account blocked, please help",
-                "Okay, I'm following your instructions",
-                "Tell me what to do, I'll do it",
-                "I'm trying my best, please guide me",
-                "What happens if I can't complete this?"
-            ])
-        else:
-            return random.choice(COOPERATIVE_REPLIES + TECHNICAL_ISSUE_REPLIES)
+        return random.choice([
+            "Okay... what exactly do I need to do now?",
+            "I'm trying but it's failing",
+            "Tell me exactly what to enter",
+            "It's asking for OTP, should I share it?",
+            "I'm on the page, what next?"
+        ])
 
 
 def build_conversation_prompt(message_text: str, conversation_history: list) -> str:
