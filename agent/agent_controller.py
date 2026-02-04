@@ -21,14 +21,20 @@ class AgentController:
     
     def __init__(self):
         """Initialize Gemini client"""
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        self.model = genai.GenerativeModel(
-            model_name=settings.LLM_MODEL,
-            generation_config={
-                "temperature": settings.LLM_TEMPERATURE,
-                "max_output_tokens": settings.LLM_MAX_TOKENS,
-            }
-        )
+        try:
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            self.model = genai.GenerativeModel(
+                model_name=settings.LLM_MODEL,
+                generation_config={
+                    "temperature": settings.LLM_TEMPERATURE,
+                    "max_output_tokens": settings.LLM_MAX_TOKENS,
+                }
+            )
+            self.gemini_available = True
+            logger.info("Gemini client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini: {e}")
+            self.gemini_available = False
     
     def generate_reply(
         self,
@@ -50,32 +56,41 @@ class AgentController:
         Returns:
             Human-like reply text
         """
+        # Calculate turn number and intelligence count for context
+        turn_number = len(conversation_history) // 2 + 1
+        intelligence_count = self._count_intelligence_in_history(conversation_history)
+        
+        # If Gemini not available, use contextual replies immediately
+        if not self.gemini_available:
+            logger.warning("Gemini not available, using contextual reply")
+            return get_contextual_reply(message_text, turn_number, intelligence_count)
+        
         try:
-            # Calculate turn number and intelligence count for context
-            turn_number = len(conversation_history) // 2 + 1
-            
-            # Count intelligence items from conversation
-            intelligence_count = self._count_intelligence_in_history(conversation_history)
-            
             # Build conversation prompt
             user_prompt = build_conversation_prompt(message_text, conversation_history)
             
             # Combine system prompt and user prompt for Gemini
             full_prompt = f"{AGENT_SYSTEM_PROMPT}\n\n{user_prompt}"
             
-            # Call Gemini API
-            response = self.model.generate_content(full_prompt)
+            # Call Gemini API with timeout handling
+            import asyncio
+            from concurrent.futures import TimeoutError
             
-            reply = response.text.strip()
-            logger.info(f"Agent generated reply for session {session_id}: {reply}")
-            
-            return reply
+            try:
+                response = self.model.generate_content(
+                    full_prompt,
+                    request_options={"timeout": 5}  # 5 second timeout
+                )
+                reply = response.text.strip()
+                logger.info(f"Agent generated reply for session {session_id}: {reply}")
+                return reply
+            except TimeoutError:
+                logger.warning(f"Gemini timeout for session {session_id}, using fallback")
+                return get_contextual_reply(message_text, turn_number, intelligence_count)
             
         except Exception as e:
             logger.error(f"Error generating agent reply: {str(e)}")
             # Fallback to contextual reply instead of generic
-            turn_number = len(conversation_history) // 2 + 1
-            intelligence_count = self._count_intelligence_in_history(conversation_history)
             return get_contextual_reply(message_text, turn_number, intelligence_count)
     
     def generate_normal_reply(
@@ -88,6 +103,10 @@ class AgentController:
         Generate reply for non-scam conversations
         Responds politely without engaging deeply
         """
+        # If Gemini not available, return simple response
+        if not self.gemini_available:
+            return "Thank you for your message."
+        
         try:
             user_prompt = build_normal_conversation_prompt(message_text, conversation_history)
             
@@ -101,7 +120,10 @@ class AgentController:
             )
             
             full_prompt = "You are a polite person responding to messages briefly.\n\n" + user_prompt
-            response = normal_model.generate_content(full_prompt)
+            response = normal_model.generate_content(
+                full_prompt,
+                request_options={"timeout": 3}  # 3 second timeout
+            )
             
             reply = response.text.strip()
             return reply

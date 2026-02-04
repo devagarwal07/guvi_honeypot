@@ -200,7 +200,23 @@ async def handle_message(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "honeypot-api"}
+    return {
+        "status": "healthy",
+        "service": "honeypot-api",
+        "gemini_configured": bool(settings.GEMINI_API_KEY),
+        "version": "1.0.0"
+    }
+
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "service": "Agentic Honey-Pot API",
+        "version": "1.0.0",
+        "status": "running",
+        "endpoint": "/api/message"
+    }
 
 
 if __name__ == "__main__":
