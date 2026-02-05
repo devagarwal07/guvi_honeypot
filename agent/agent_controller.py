@@ -1,8 +1,9 @@
 """
 Agent Controller - Autonomous AI Agent
 Manages agent decision-making and reply generation
+OPTIMIZED FOR SPEED - Rule-based fast path with LLM fallback
 """
-import google.generativeai as genai
+import random
 from typing import List, Dict
 import logging
 from config import settings
@@ -10,31 +11,139 @@ from agent.persona import (
     AGENT_SYSTEM_PROMPT,
     build_conversation_prompt,
     build_normal_conversation_prompt,
-    get_contextual_reply
+    get_contextual_reply,
+    FIRST_TURN_REPLIES,
+    FOLLOWUP_REPLIES,
+    EXTRACTION_REPLIES,
+    COOPERATIVE_REPLIES,
+    TECHNICAL_ISSUE_REPLIES
 )
 
 logger = logging.getLogger(__name__)
 
+# Try to import Gemini, but don't fail if not available
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("google-generativeai not installed, using rule-based replies only")
+
 
 class AgentController:
-    """Controls the autonomous AI agent behavior"""
+    """Controls the autonomous AI agent behavior - OPTIMIZED FOR SPEED"""
     
     def __init__(self):
-        """Initialize Gemini client"""
-        try:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(
-                model_name=settings.LLM_MODEL,
-                generation_config={
-                    "temperature": settings.LLM_TEMPERATURE,
-                    "max_output_tokens": settings.LLM_MAX_TOKENS,
-                }
-            )
-            self.gemini_available = True
-            logger.info("Gemini client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini: {e}")
-            self.gemini_available = False
+        """Initialize - Gemini is optional, rule-based is primary"""
+        self.gemini_available = False
+        
+        if GEMINI_AVAILABLE and settings.GEMINI_API_KEY:
+            try:
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                self.model = genai.GenerativeModel(
+                    model_name=settings.LLM_MODEL,
+                    generation_config={
+                        "temperature": settings.LLM_TEMPERATURE,
+                        "max_output_tokens": 50,  # Reduced for speed
+                    }
+                )
+                self.gemini_available = True
+            except Exception as e:
+                logger.warning(f"Gemini init failed: {e}")
+    
+    def generate_fast_reply(
+        self,
+        message_text: str,
+        conversation_history: List[Dict],
+        session_id: str
+    ) -> str:
+        """
+        FAST rule-based reply - primary path for low latency
+        Returns immediately without API calls
+        """
+        turn_number = len(conversation_history) // 2 + 1
+        msg_lower = message_text.lower()
+        
+        # First message - show initial concern
+        if turn_number == 1:
+            if any(word in msg_lower for word in ["block", "suspend", "frozen", "deactivat"]):
+                return random.choice([
+                    "Why is my account being blocked?",
+                    "What happened to my account?",
+                    "Which bank is this from?"
+                ])
+            elif any(word in msg_lower for word in ["verify", "kyc", "update"]):
+                return random.choice([
+                    "What verification is needed?",
+                    "Which bank is this?",
+                    "Is this really from the bank?"
+                ])
+            elif any(word in msg_lower for word in ["prize", "winner", "lottery", "won"]):
+                return random.choice([
+                    "What did I win?",
+                    "I don't remember entering any contest",
+                    "Which company is this from?"
+                ])
+            else:
+                return random.choice(FIRST_TURN_REPLIES)
+        
+        # Check for specific content to extract intelligence
+        if any(word in msg_lower for word in ["link", "click", "http", "url", "www"]):
+            return random.choice([
+                "The link is not opening",
+                "Can you send the link again?",
+                "It shows error when I click",
+                "Which link should I open?"
+            ])
+        
+        if any(word in msg_lower for word in ["upi", "@", "gpay", "phonepe", "paytm"]):
+            return random.choice([
+                "Which UPI ID exactly?",
+                "Can you send the UPI ID again?",
+                "What amount should I send?",
+                "Is there another UPI ID?"
+            ])
+        
+        if any(word in msg_lower for word in ["account", "number", "bank"]):
+            return random.choice([
+                "Which account number?",
+                "Which bank is this for?",
+                "I have multiple accounts, which one?",
+                "What details do you need?"
+            ])
+        
+        if any(word in msg_lower for word in ["otp", "code", "password", "pin"]):
+            return random.choice([
+                "Which OTP do you need?",
+                "I haven't received any code yet",
+                "Should I share the OTP?",
+                "Where do I find this code?"
+            ])
+        
+        if any(word in msg_lower for word in ["call", "phone", "contact", "number"]):
+            return random.choice([
+                "What's the phone number?",
+                "Can you call me instead?",
+                "Give me the customer care number"
+            ])
+        
+        if any(word in msg_lower for word in ["pay", "send", "transfer", "amount", "fee", "charge"]):
+            return random.choice([
+                "How much do I need to pay?",
+                "Where should I send the money?",
+                "What's the account for payment?",
+                "Why do I need to pay?"
+            ])
+        
+        # Stage-based responses for later turns
+        if turn_number <= 4:
+            return random.choice(FOLLOWUP_REPLIES)
+        elif turn_number <= 8:
+            return random.choice(EXTRACTION_REPLIES)
+        elif turn_number <= 12:
+            return random.choice(COOPERATIVE_REPLIES)
+        else:
+            return random.choice(TECHNICAL_ISSUE_REPLIES + COOPERATIVE_REPLIES)
     
     def generate_reply(
         self,

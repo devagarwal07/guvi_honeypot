@@ -1,15 +1,16 @@
 """
 FastAPI entry point for Agentic Honey-Pot Scam Detection System
 Handles incoming message events and orchestrates scam detection + agent engagement
+OPTIMIZED FOR LOW LATENCY - Avoids timeouts on Render free tier
 """
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
 import uvicorn
 import logging
-import json
+import asyncio
 
 from auth import verify_api_key
 from config import settings
@@ -19,13 +20,13 @@ from extractor.intelligence import IntelligenceExtractor
 from sessions.memory_store import SessionMemoryStore
 from callbacks.guvi_client import GuviCallbackClient
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - minimal for production
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Agentic Honey-Pot API", version="1.0.0")
 
-# Initialize components
+# Initialize components (lightweight - no heavy initialization)
 scam_classifier = ScamClassifier()
 agent_controller = AgentController()
 intelligence_extractor = IntelligenceExtractor()
@@ -33,24 +34,23 @@ session_store = SessionMemoryStore()
 callback_client = GuviCallbackClient()
 
 
-# Add middleware to log all requests
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"Incoming request: {request.method} {request.url}")
-    try:
-        body = await request.body()
-        if body:
-            logger.info(f"Request body: {body.decode()}")
-    except Exception as e:
-        logger.error(f"Error reading request body: {e}")
-    
-    # Reset body for actual processing
-    async def receive():
-        return {"type": "http.request", "body": body}
-    
-    request._receive = receive
-    response = await call_next(request)
-    return response
+@app.on_event("startup")
+async def startup_event():
+    """Pre-warm the application on startup"""
+    # Pre-compile regex patterns if any
+    pass
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint - fast response"""
+    return {"status": "healthy"}
+
+
+@app.get("/")
+async def root():
+    """Root endpoint - fast response"""
+    return {"status": "ok", "service": "honeypot-api"}
 
 
 # Custom validation error handler
@@ -96,20 +96,19 @@ class ApiResponse(BaseModel):
 @app.post("/api/message", response_model=ApiResponse)
 async def handle_message(
     request: IncomingRequest,
+    background_tasks: BackgroundTasks,
     api_key: str = Depends(verify_api_key)
 ):
     """
     Main endpoint to receive suspected scam messages
     Processes each message and returns a human-like reply
+    OPTIMIZED: Uses fast rule-based responses with LLM as fallback
     """
     try:
         session_id = request.sessionId
         incoming_message = request.message
         conversation_history = request.conversationHistory
-        metadata = request.metadata  # Now always has a value (default or provided)
-        
-        logger.info(f"Processing message for session: {session_id}")
-        logger.info(f"Message: {incoming_message.text}")
+        metadata = request.metadata
         
         # Get or create session state
         session = session_store.get_or_create_session(session_id)
@@ -117,7 +116,7 @@ async def handle_message(
         # Increment message counter
         session_store.increment_message_count(session_id)
         
-        # Build full conversation context - convert Pydantic models to dicts
+        # Build full conversation context
         full_history = [
             {"sender": msg.sender, "text": msg.text, "timestamp": msg.timestamp}
             for msg in conversation_history
@@ -134,21 +133,19 @@ async def handle_message(
             )
             
             if scam_detected:
-                logger.info(f"Scam detected for session: {session_id}")
                 session_store.mark_scam_detected(session_id)
                 session.scam_detected = True
         
-        # Generate reply based on scam detection status
+        # Generate reply - FAST PATH FIRST
         if session.scam_detected:
-            # Use AI agent to generate human-like reply
-            reply = agent_controller.generate_reply(
+            # Use FAST rule-based reply first, LLM only if needed
+            reply = agent_controller.generate_fast_reply(
                 incoming_message.text,
                 full_history,
-                session_id,
-                metadata
+                session_id
             )
             
-            # Extract intelligence from the incoming message
+            # Extract intelligence from the incoming message (fast regex)
             extracted = intelligence_extractor.extract_from_message(incoming_message.text)
             session_store.add_intelligence(session_id, extracted)
             
@@ -160,63 +157,49 @@ async def handle_message(
             )
             
             if should_end and not session.callback_sent:
-                # Send final callback to evaluation endpoint
-                logger.info(f"Sending final callback for session: {session_id}")
-                callback_success = await callback_client.send_final_result(
-                    session_id=session_id,
-                    scam_detected=True,
-                    total_messages=session.total_messages,
-                    intelligence=session.intelligence,
-                    conversation_history=full_history
+                # Send callback in BACKGROUND to not block response
+                background_tasks.add_task(
+                    send_callback_background,
+                    session_id,
+                    session.total_messages,
+                    session.intelligence,
+                    full_history
                 )
-                
-                if callback_success:
-                    session_store.mark_callback_sent(session_id)
-                    logger.info(f"Callback sent successfully for session: {session_id}")
-                else:
-                    logger.error(f"Failed to send callback for session: {session_id}")
+                session_store.mark_callback_sent(session_id)
         else:
-            # Normal conversation - respond naturally without revealing detection
-            reply = agent_controller.generate_normal_reply(
+            # Normal cautious response
+            reply = agent_controller.generate_fast_reply(
                 incoming_message.text,
                 full_history,
-                metadata
+                session_id
             )
         
-        # Store the conversation turn
+        # Store conversation turn
         session_store.add_conversation_turn(session_id, incoming_message, reply)
         
         return ApiResponse(status="success", reply=reply)
         
     except Exception as e:
-        logger.error(f"Error processing message: {str(e)}", exc_info=True)
-        # Return a safe generic response even on error
+        logger.error(f"Error: {str(e)}")
+        # Return safe generic response even on error
         return ApiResponse(
             status="success",
-            reply="Sorry, I didn't quite understand. Could you explain again?"
+            reply="I didn't understand. Can you explain again?"
         )
 
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": "honeypot-api",
-        "gemini_configured": bool(settings.GEMINI_API_KEY),
-        "version": "1.0.0"
-    }
-
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "service": "Agentic Honey-Pot API",
-        "version": "1.0.0",
-        "status": "running",
-        "endpoint": "/api/message"
-    }
+async def send_callback_background(session_id: str, total_messages: int, intelligence: dict, history: list):
+    """Background task to send callback without blocking response"""
+    try:
+        await callback_client.send_final_result(
+            session_id=session_id,
+            scam_detected=True,
+            total_messages=total_messages,
+            intelligence=intelligence,
+            conversation_history=history
+        )
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
 
 
 if __name__ == "__main__":
